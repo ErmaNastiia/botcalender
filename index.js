@@ -282,21 +282,21 @@ bot.command('book', async ctx => {
   };
 
   await ctx.reply(
-    'Вы начали процесс бронирования кабинетов! Обязательно посмотри свободные слоты в расписании <a href="https://dushepolezno.ru/prostranstvo-zapis">ссылка</a>. Сейчас я задам вам несколько вопросов о вашем мероприятии, чтобы передать эту информацию менеджеру. Для начала, введите ваше имя.',
+    'Вы начали процесс бронирования кабинетов! Обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Сейчас я задам вам несколько вопросов о вашем мероприятии, чтобы передать эту информацию менеджеру. Для начала, введите ваше имя.',
     { parse_mode: 'HTML' }
   );
 });
 bot.command('start', async ctx => {
   // await ctx.react('👌');
   await ctx.reply(
-    'Привет! я бот для аренды Простраства. Мы открыты с 9 до 22 и работаем без выходных. Подробнее узнай тут: <a href="https://dushepolezno.ru/prostranstvo">ссылка</a>. Перед началом бронирования обязательно посмотри свободные слоты в расписании <a href="https://dushepolezno.ru/prostranstvo-zapis">ссылка</a>. Если все понятно вводи /book и мы начнем процесс бронирования. Подробнее  кбинеттах введи /info',
+    'Привет! я бот для аренды Простраства. Мы открыты с 9 до 22 и работаем без выходных. Подробнее узнай <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно вводи /book и мы начнем процесс бронирования. Подробнее  кабинетах введи /info',
     { parse_mode: 'HTML', disable_web_page_preview: false }
   );
 });
 bot.command('info', async ctx => {
   await ctx.react('👌');
   await ctx.reply(
-    'В нашем пространстве есть два помещения разного размера: Кабинет 13 м2 и Зал 17 м2. Кабинет подходит для проведения консультаций, в том числе гупповых по 5-6 человек, для занятий с репетитором и для съемок фото или видео. Зал предназначен для лекций, выставок, творческих мастер-классов, коворкинга, использования пространства как мастерской или консультативнго пространства, зал вмещает в себя примерно 10-15 человек. Подробнее тут <a href="https://dushepolezno.ru/prostranstvo">ссылка</a>. Перед началом бронирования обязательно посмотри свободные слоты в расписании <a href="https://dushepolezno.ru/prostranstvo-zapis">ссылка</a>. Если все понятно вводи /book и мы начнем процесс бронирования',
+    'В нашем пространстве есть два помещения разного размера: Кабинет 13 м2 и Зал 17 м2. Кабинет подходит для проведения консультаций, в том числе гупповых по 5-6 человек, для занятий с репетитором и для съемок фото или видео. Зал предназначен для лекций, выставок, творческих мастер-классов, коворкинга, использования пространства как мастерской или консультативнго пространства, зал вмещает в себя примерно 10-15 человек. Подробнее <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно вводи /book и мы начнем процесс бронирования',
     { parse_mode: 'HTML' }
   );
 });
@@ -310,7 +310,7 @@ bot.on('message', async ctx => {
       ctx.session.clientName = text;
       ctx.session.step = 'askContact';
       await ctx.reply(
-        'Спасибо! Теперь, пожалуйста, введите ваш телефон в формате +7(900)1234567.'
+        'Спасибо! Теперь, пожалуйста, введите ваш email в формате qwerty@yandex.com и телефон в формате +7(900)1234567.'
       );
       break;
 
@@ -400,7 +400,7 @@ bot.on('message', async ctx => {
           await addEventToCalendar(ctx.session);
           await sendTelegramNotification(ctx.session);
           await ctx.reply(
-            'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work'
+            'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
           );
           ctx.session.step = 'idle'; // Reset the conversation
         } catch (error) {
@@ -411,7 +411,7 @@ bot.on('message', async ctx => {
         }
       } else {
         await ctx.reply(
-          'Извините, это время уже забронировано. Пожалуйста, выберите другое время. Посмотреть календарь вы можете по ссылке'
+          'Извините, это время уже забронировано. Пожалуйста, выберите другое время.'
         );
         ctx.session.step = 'chooseStartTime';
         const timeKeyboard = generateTimeKeyboard();
@@ -487,7 +487,7 @@ bot.on('callback_query', async ctx => {
             await addEventToCalendar(ctx.session);
             await sendTelegramNotification(ctx.session);
             await ctx.reply(
-              'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work.'
+              'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
             );
             ctx.session.step = 'idle'; // Reset the conversation
           } catch (error) {
@@ -539,7 +539,7 @@ bot.on('callback_query', async ctx => {
               await addEventToCalendar(ctx.session);
               await sendTelegramNotification(ctx.session);
               await ctx.reply(
-                'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work'
+                'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
               );
               ctx.session.step = 'idle'; // Reset the conversation
             } catch (error) {
