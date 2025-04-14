@@ -23,11 +23,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ErmaNastiia/dushepolezno_bot.git"
+    "url": "git+https://github.com/ErmaNastiia/votetobot.git"
   },
   "bugs": {
-    "url": "https://github.com/ErmaNastiia/dushepolezno_bot/issues"
+    "url": "https://github.com/ErmaNastiia/votetobot/issues"
   },
-  "homepage": "https://github.com/ErmaNastiia/dushepolezno_bot#readme",
+  "homepage": "https://github.com/ErmaNastiia/votetobot#readme",
   "description": ""
 }
