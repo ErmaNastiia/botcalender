@@ -6,28 +6,13 @@ const {
   HttpError,
   InlineKeyboard,
 } = require('grammy');
-const { google } = require('googleapis');
-const { OAuth2 } = google.auth;
-// const nodemailer = require('nodemailer');
-const { freeStorage } = require('@grammyjs/storage-free');
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 8080;
+
 // Initialize the bot
 const bot = new Bot(process.env.BOT_API_KEY);
 
-
-
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  process.env.REDIRECT_URI
-);
-oAuth2Client.setCredentials({ refresh_token: process.env.REFRESH_TOKEN });
-const calendar = google.calendar({
-  version: 'v3',
-  auth: oAuth2Client,
-});
 // Session setup for maintaining conversation state
 bot.use(
   session({
@@ -39,68 +24,17 @@ bot.use(
       cabinet: '',
       date: '',
       startTime: '',
-      timeSlot: '',
+      endTime: '',
       customTime: '',
+      needsAfisha: '',
     }),
   })
 );
-// // ////////////////////////////////
+
 bot.api.setMyCommands([
-  { command: 'start', description: 'Получить информацию о пространстве.' },
-  { command: 'info', description: 'Расскажу о помещениях' },
-  { command: 'book', description: 'Арендовать пространство' },
+  { command: 'start', description: 'Главное меню' },
+  { command: 'book', description: 'Начать бронирование' },
 ]);
-// Helper function to check if time slot is available
-async function isTimeSlotAvailable(date, startTime, endTime, cabinet) {
-  try {
-    // Format date and times for Google Calendar
-    const timeZone = 'Europe/Moscow'; // Adjust to your timezone
-    // Convert DD/MM/YYYY to YYYY-MM-DD for Google Calendar
-    const [day, month, year] = date.split('/');
-    const dateStr = `${year}-${month}-${day}`;
-    const startDateTime = new Date(`${dateStr}T${startTime}:00`);
-    const endDateTime = new Date(`${dateStr}T${endTime}:00`);
-
-    // Create cabinet-specific ID suffix for the summary field to differentiate events
-    const cabinetSuffix =
-      cabinet === 'cabinet13' ? '[Кабинет 13м²]' : '[Зал 17м²]';
-
-    // Get events from Google Calendar for the specified day
-    const response = await calendar.events.list({
-      calendarId: process.env.CALENDAR_ID,
-      timeMin: new Date(`${dateStr}T00:00:00`).toISOString(),
-      timeMax: new Date(`${dateStr}T23:59:59`).toISOString(),
-      timeZone,
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-
-    const events = response.data.events || [];
-
-    // Check for overlapping events for the specified cabinet
-    for (const event of events) {
-      // Skip events that don't have a summary or aren't for the specified cabinet
-      if (!event.summary || !event.summary.includes(cabinetSuffix)) continue;
-
-      const eventStart = new Date(event.start.dateTime || event.start.date);
-      const eventEnd = new Date(event.end.dateTime || event.end.date);
-
-      // Check if there's an overlap
-      if (
-        (startDateTime >= eventStart && startDateTime < eventEnd) ||
-        (endDateTime > eventStart && endDateTime <= eventEnd) ||
-        (startDateTime <= eventStart && endDateTime >= eventEnd)
-      ) {
-        return false; // Overlap found
-      }
-    }
-
-    return true; // No overlap, slot is available
-  } catch (error) {
-    console.error('Error checking time slot availability:', error);
-    return false; // Default to unavailable on error
-  }
-}
 
 // Helper function to send Telegram notification to admin
 async function sendTelegramNotification(sessionData) {
@@ -111,29 +45,17 @@ async function sendTelegramNotification(sessionData) {
     cabinet,
     date,
     startTime,
-    timeSlot,
+    endTime,
     customTime,
+    needsAfisha,
   } = sessionData;
 
-  let timeInfo;
-  if (timeSlot === 'wholeDay') {
-    timeInfo = 'Весь день';
-  } else if (timeSlot === 'custom') {
-    timeInfo = `Время: ${customTime}`;
-  } else {
-    let duration;
-    if (timeSlot === '1hour') {
-      duration = '1 час';
-    } else if (timeSlot === '1.5hours') {
-      duration = '1.5 часа';
-    } else if (timeSlot === '2hours') {
-      duration = '2 часа';
-    }
+  const timeInfo = customTime
+    ? `Время: ${customTime}`
+    : `С ${startTime} до ${endTime}`;
 
-    timeInfo = `Начало: ${startTime}, Продолжительность: ${duration}`;
-  }
-
-  const cabinetName = cabinet === 'cabinet13' ? 'Кабинет 13м²' : 'Зал 17м²';
+  const cabinetName = cabinet === 'cabinet13' ? 'Кабинет 13м²🔴' : 'Зал 17м²🔵';
+  const afishaInfo = needsAfisha === 'yes' ? 'Да' : 'Нет';
 
   const message = `
 🔔 *Новое бронирование ожидает подтверждения и оплаты*
@@ -144,6 +66,7 @@ async function sendTelegramNotification(sessionData) {
 🏢 *Помещение:* ${cabinetName}
 📅 *Дата:* ${date}
 ⏰ *Время:* ${timeInfo}
+📢 *Нужна афиша:* ${afishaInfo}
   `;
 
   try {
@@ -154,95 +77,6 @@ async function sendTelegramNotification(sessionData) {
   } catch (error) {
     console.error('Error sending admin notification:', error);
   }
-}
-
-// Helper function to add event to Google Calendar
-async function addEventToCalendar(sessionData) {
-  const {
-    clientName,
-    // contactInfo,
-    appointmentName,
-    cabinet,
-    date,
-    startTime,
-    timeSlot,
-    customTime,
-  } = sessionData;
-
-  // Determine start and end times based on timeSlot
-  let eventStartTime, eventEndTime;
-  const timeZone = 'Europe/Moscow'; // Adjust to your timezone
-
-  // Convert DD/MM/YYYY to YYYY-MM-DD for Google Calendar
-  const [day, month, year] = date.split('/');
-  const googleCalendarDate = `${year}-${month}-${day}`;
-
-  // Set color based on cabinet
-  const colorId = cabinet === 'cabinet13' ? '11' : '6'; // 11=red, 6=orange
-
-  if (timeSlot === 'wholeDay') {
-    // For whole day events
-    return calendar.events.insert({
-      calendarId: process.env.CALENDAR_ID,
-      resource: {
-        summary: `${appointmentName} - ${clientName} ${
-          cabinet === 'cabinet13' ? '[Кабинет 13м²]' : '[Зал 17м²]'
-        }`,
-        description: `\nИмя клиента: ${clientName}\nНазвание мероприятия: ${appointmentName}`,
-        start: {
-          date: googleCalendarDate,
-        },
-        end: {
-          date: googleCalendarDate,
-        },
-        colorId: colorId,
-      },
-    });
-  } else if (timeSlot === 'custom') {
-    // For custom time slots
-    [eventStartTime, eventEndTime] = customTime.split('-').map(t => t.trim());
-  } else {
-    // For predefined time slots
-    eventStartTime = startTime;
-
-    // Calculate end time based on duration
-    const startDate = new Date(`${googleCalendarDate}T${eventStartTime}:00`);
-    let hours = 0;
-
-    if (timeSlot === '1hour') {
-      hours = 1;
-    } else if (timeSlot === '1.5hours') {
-      hours = 1.5;
-    } else if (timeSlot === '2hours') {
-      hours = 2;
-    }
-
-    const endDate = new Date(startDate.getTime() + hours * 60 * 60 * 1000);
-    eventEndTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate
-      .getMinutes()
-      .toString()
-      .padStart(2, '0')}`;
-  }
-
-  // Add event to Google Calendar
-  return calendar.events.insert({
-    calendarId: process.env.CALENDAR_ID,
-    resource: {
-      summary: `${appointmentName} - ${clientName} ${
-        cabinet === 'cabinet13' ? '[Кабинет 13м²]' : '[Зал 17м²]'
-      }`,
-      description: `\nИмя клиента: ${clientName}\nНазвание мероприятия: ${appointmentName}`,
-      start: {
-        dateTime: `${googleCalendarDate}T${eventStartTime}:00`,
-        timeZone,
-      },
-      end: {
-        dateTime: `${googleCalendarDate}T${eventEndTime}:00`,
-        timeZone,
-      },
-      colorId: colorId,
-    },
-  });
 }
 
 // Generate time selection keyboard (9:00 to 22:00)
@@ -264,42 +98,43 @@ function generateTimeKeyboard() {
     }
   }
 
+  keyboard.row().text('Другое время', 'customTime');
   return keyboard;
 }
 
-// Start command
-bot.command('book', async ctx => {
-  ctx.session = {
-    step: 'askName',
-    clientName: '',
-    contactInfo: '',
-    appointmentName: '',
-    cabinet: '',
-    date: '',
-    startTime: '',
-    timeSlot: '',
-    customTime: '',
-  };
+// Start command - Main Menu
+bot.command('start', async ctx => {
+  const mainMenu = new InlineKeyboard()
+    .text('✅ Забронировать', 'menu_book')
+    .row()
+    .text('ℹ️ О пространстве', 'menu_info')
+    .row()
+    .url('📅 Расписание', 'https://dushepolezno.ru/prostranstvo-zapis');
+
+  ctx.session.step = 'idle';
 
   await ctx.reply(
-    'Вы начали процесс бронирования кабинетов! Обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Сейчас я задам вам несколько вопросов о вашем мероприятии, чтобы передать эту информацию менеджеру. Для начала, введите ваше имя.',
+    'Привет! 🤖 Я бот для аренды Пространства. Мы открыты с 9 до 22 и работаем без выходных. Подробнее <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотрите свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно введите /book и мы начнем процесс бронирования. Подробнее о кабинетах введите /info',
+    { parse_mode: 'HTML', reply_markup: mainMenu }
+  );
+});
+
+bot.command('book', async ctx => {
+  ctx.session.step = 'askName';
+  await ctx.reply(
+    'Вы начали процесс бронирования кабинетов! Посмотреть актуальное расписание можно на нашем <a href="https://dushepolezno.ru/prostranstvo-zapis">сайте</a>. Сейчас я задам вам несколько вопросов о вашем мероприятии, чтобы передать эту информацию менеджеру. Для начала, введите ваше имя.',
     { parse_mode: 'HTML' }
   );
 });
-bot.command('start', async ctx => {
-  // await ctx.react('👌');
-  await ctx.reply(
-    'Привет! я бот для аренды Простраства. Мы открыты с 9 до 22 и работаем без выходных. Подробнее узнай <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно вводи /book и мы начнем процесс бронирования. Подробнее  кабинетах введи /info',
-    { parse_mode: 'HTML', disable_web_page_preview: false }
-  );
-});
+
 bot.command('info', async ctx => {
   await ctx.react('👌');
   await ctx.reply(
-    'В нашем пространстве есть два помещения разного размера: Кабинет 13 м2 и Зал 17 м2. Кабинет подходит для проведения консультаций, в том числе гупповых по 5-6 человек, для занятий с репетитором и для съемок фото или видео. Зал предназначен для лекций, выставок, творческих мастер-классов, коворкинга, использования пространства как мастерской или консультативнго пространства, зал вмещает в себя примерно 10-15 человек. Подробнее <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотри свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно вводи /book и мы начнем процесс бронирования',
+    'В нашем пространстве есть два помещения разного размера: Кабинет 13 м2 и Зал 17 м2. Кабинет подходит для проведения консультаций, в том числе групповых по 5-6 человек, для занятий с репетитором и для съемок фото или видео. Зал предназначен для лекций, выставок, творческих мастер-классов, коворкинга, использования пространства как мастерской или консультативного пространства, зал вмещает в себя примерно 10-15 человек. Подробнее <a href="https://dushepolezno.ru/prostranstvo">тут</a>. Перед началом бронирования обязательно посмотрите свободные слоты в <a href="https://dushepolezno.ru/prostranstvo-zapis">расписании</a>. Если все понятно введите /book и мы начнем процесс бронирования',
     { parse_mode: 'HTML' }
   );
 });
+
 // Main conversation handler
 bot.on('message', async ctx => {
   const { text } = ctx.message;
@@ -310,7 +145,7 @@ bot.on('message', async ctx => {
       ctx.session.clientName = text;
       ctx.session.step = 'askContact';
       await ctx.reply(
-        'Спасибо! Теперь, пожалуйста, введите ваш email в формате qwerty@yandex.com и телефон в формате +7(900)1234567.'
+        'Спасибо! Как с вами можно будет связаться? Введите, пожалуйста, номер телефона, по которому вас можно найти в Telegram, в формате +7(900)1234567 или адрес электронной почты в формате qwerty@yandex.com'
       );
       break;
 
@@ -327,8 +162,8 @@ bot.on('message', async ctx => {
       ctx.session.step = 'chooseCabinet';
 
       const cabinetKeyboard = new InlineKeyboard()
-        .text('Кабинет (13м²)', 'cabinet13')
-        .text('Зал (17м²)', 'hall17');
+        .text('Кабинет (13м²)🔴', 'cabinet13')
+        .text('Зал (17м²)🔵', 'hall17');
 
       await ctx.reply('Выберите, пожалуйста, помещение:', {
         reply_markup: cabinetKeyboard,
@@ -338,20 +173,23 @@ bot.on('message', async ctx => {
     case 'askDate':
       // Validate date format (DD/MM/YYYY)
       const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayDay = String(today.getDate()).padStart(2, '0');
+      const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+      const todayYear = today.getFullYear();
+      const todayFormatted = `${todayDay}/${todayMonth}/${todayYear}`;
 
       if (!dateRegex.test(text)) {
         await ctx.reply(
-          'Пожалуйста, введите дату в формате ДД/ММ/ГГГГ (например, 13/03/2025).'
+          `Пожалуйста, введите дату в формате ДД/ММ/ГГГГ (например, ${todayFormatted}).`
         );
         break;
       }
 
       // Check if date is not in the past
-      // Parse DD/MM/YYYY to a proper date object
       const [day, month, year] = text.split('/').map(Number);
-      const selectedDate = new Date(year, month - 1, day); // Months are 0-indexed in JS
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const selectedDate = new Date(year, month - 1, day);
 
       if (selectedDate < today) {
         await ctx.reply(
@@ -363,7 +201,6 @@ bot.on('message', async ctx => {
       ctx.session.date = text;
       ctx.session.step = 'chooseStartTime';
 
-      // Show time selection keyboard
       const timeKeyboard = generateTimeKeyboard();
       await ctx.reply('Выберите время начала (с 9:00 до 22:00):', {
         reply_markup: timeKeyboard,
@@ -382,43 +219,15 @@ bot.on('message', async ctx => {
       }
 
       ctx.session.customTime = text;
-      ctx.session.timeSlot = 'custom';
+      ctx.session.step = 'askNeedsAfisha';
 
-      // Process the booking
-      const [startTime, endTime] = text.split('-').map(t => t.trim());
+      const afishaKeyboard = new InlineKeyboard()
+        .text('Да', 'afisha_yes')
+        .text('Нет', 'afisha_no');
 
-      // Check availability
-      const isAvailable = await isTimeSlotAvailable(
-        ctx.session.date,
-        startTime,
-        endTime,
-        ctx.session.cabinet
-      );
-
-      if (isAvailable) {
-        try {
-          await addEventToCalendar(ctx.session);
-          await sendTelegramNotification(ctx.session);
-          await ctx.reply(
-            'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
-          );
-          ctx.session.step = 'idle'; // Reset the conversation
-        } catch (error) {
-          console.error('Error processing booking:', error);
-          await ctx.reply(
-            'Произошла ошибка при бронировании. Пожалуйста, попробуйте еще раз или свяжитесь с менеджером.'
-          );
-        }
-      } else {
-        await ctx.reply(
-          'Извините, это время уже забронировано. Пожалуйста, выберите другое время.'
-        );
-        ctx.session.step = 'chooseStartTime';
-        const timeKeyboard = generateTimeKeyboard();
-        await ctx.reply('Выберите время начала (с 9:00 до 22:00):', {
-          reply_markup: timeKeyboard,
-        });
-      }
+      await ctx.reply('Нужна ли афиша для вашего мероприятия?', {
+        reply_markup: afishaKeyboard,
+      });
       break;
 
     default:
@@ -431,139 +240,155 @@ bot.on('callback_query', async ctx => {
   const callbackData = ctx.callbackQuery.data;
 
   switch (ctx.session.step) {
+    case 'idle':
+      if (callbackData === 'menu_book') {
+        ctx.session.step = 'askName';
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          'Вы начали процесс бронирования кабинетов! Посмотреть актуальное расписание можно на нашем <a href="https://dushepolezno.ru/prostranstvo-zapis">сайте</a>. Сейчас я задам вам несколько вопросов о вашем мероприятии, чтобы передать эту информацию менеджеру. Для начала, введите ваше имя.',
+          { parse_mode: 'HTML' }
+        );
+      }
+
+      if (callbackData === 'menu_info') {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          'В нашем пространстве есть два помещения разного размера: Кабинет 13 м2 и Зал 17 м2. Кабинет подходит для проведения консультаций, в том числе групповых по 5-6 человек, для занятий с репетитором и для съемок фото или видео. Зал предназначен для лекций, выставок, творческих мастер-классов, коворкинга, использования пространства как мастерской или консультативного пространства, зал вмещает в себя примерно 10-15 человек. Подробнее <a href="https://dushepolezno.ru/prostranstvo">тут</a>.',
+          { parse_mode: 'HTML' }
+        );
+      }
+      break;
+
     case 'chooseCabinet':
       if (callbackData === 'cabinet13' || callbackData === 'hall17') {
         ctx.session.cabinet = callbackData;
         ctx.session.step = 'askDate';
         await ctx.answerCallbackQuery();
+
+        // Validate date format (DD/MM/YYYY)
+        const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayDay = String(today.getDate()).padStart(2, '0');
+        const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+        const todayYear = today.getFullYear();
+        const todayFormatted = `${todayDay}/${todayMonth}/${todayYear}`;
+
         await ctx.reply(
-          'Пожалуйста, введите дату бронирования в формате ДД/ММ/ГГГГ (например, 13/03/2025).'
+          `Пожалуйста, введите дату бронирования в формате ДД/ММ/ГГГГ (например, ${todayFormatted}).`
         );
       }
       break;
 
     case 'chooseStartTime':
-      // Handle time selection (format: "HH:MM")
-      const timeRegex = /^\d{2}:\d{2}$/;
+      if (callbackData === 'customTime') {
+        ctx.session.step = 'askCustomTime';
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          'Пожалуйста, введите начальное и конечное время в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-11:30).'
+        );
+        break;
+      }
 
+      const timeRegex = /^\d{2}:\d{2}$/;
       if (timeRegex.test(callbackData)) {
         ctx.session.startTime = callbackData;
-        ctx.session.step = 'chooseTimeSlot';
-
-        const timeSlotKeyboard = new InlineKeyboard()
-          .text('1 час', '1hour')
-          .text('1.5 часа', '1.5hours')
-          .row()
-          .text('2 часа', '2hours')
-          // .text('Весь день', 'wholeDay')
-          // .row()
-          .text('Другое время', 'customTime');
+        ctx.session.step = 'chooseEndTime';
 
         await ctx.answerCallbackQuery();
         await ctx.reply(
-          `Выбрано время начала: ${callbackData}. Выберите продолжительность:`,
-          { reply_markup: timeSlotKeyboard }
+          `Выбрано время начала: ${callbackData}. Выберите время окончания:`,
+          { reply_markup: generateTimeKeyboard() }
         );
       }
       break;
 
-    case 'chooseTimeSlot':
-      await ctx.answerCallbackQuery();
-
+    case 'chooseEndTime':
       if (callbackData === 'customTime') {
         ctx.session.step = 'askCustomTime';
+        await ctx.answerCallbackQuery();
         await ctx.reply(
           'Пожалуйста, введите начальное и конечное время в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-11:30).'
         );
-      } else {
-        ctx.session.timeSlot = callbackData;
+        break;
+      }
 
-        // Process the booking
-        let endTime;
-        const timeRegex = /^\d{2}:\d{2}$/;
-        if (timeRegex.test(callbackData) === 'wholeDay') {
-          // For whole day, we don't need to check time conflicts
-          try {
-            await addEventToCalendar(ctx.session);
-            await sendTelegramNotification(ctx.session);
-            await ctx.reply(
-              'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
-            );
-            ctx.session.step = 'idle'; // Reset the conversation
-          } catch (error) {
-            console.error('Error processing booking:', error);
-            await ctx.reply(
-              'Произошла ошибка при бронировании. Пожалуйста, попробуйте еще раз или свяжитесь с менеджером.'
-            );
-          }
-        } else {
-          // For time slots, determine end time based on start time and duration
-          const startTime = ctx.session.startTime;
-          const [hours, minutes] = startTime.split(':').map(Number);
+      ctx.session.endTime = callbackData;
+      ctx.session.step = 'askNeedsAfisha';
 
-          // Convert DD/MM/YYYY to YYYY-MM-DD for date calculations
-          const [day, month, year] = ctx.session.date.split('/').map(Number);
-          const startDate = new Date(year, month - 1, day, hours, minutes);
+      const afishaKeyboard = new InlineKeyboard()
+        .text('Да', 'afisha_yes')
+        .text('Нет', 'afisha_no');
 
-          let durationHours = 0;
+      await ctx.answerCallbackQuery();
+      await ctx.reply(
+        'Хотите ли вы, чтобы мы добавили анонс вашего мероприятия на сайте и канале Пространства? Если да, то после подтверждения бронирования присылайте текст анонса с указанием контакта для регистрации и две-три фотографии на @dushepolezno_work.',
+        { reply_markup: afishaKeyboard }
+      );
+      break;
 
-          if (callbackData === '1hour') {
-            durationHours = 1;
-          } else if (callbackData === '1.5hours') {
-            durationHours = 1.5;
-          } else if (callbackData === '2hours') {
-            durationHours = 2;
-          }
-          // else if (callbackData === 'wholeDay') {
-          //   durationHours = 24;
-          // }
+    case 'askNeedsAfisha':
+      ctx.session.needsAfisha = callbackData === 'afisha_yes' ? 'yes' : 'no';
 
-          const endDate = new Date(
-            startDate.getTime() + durationHours * 60 * 60 * 1000
+      const timeInfo = ctx.session.customTime
+        ? ctx.session.customTime
+        : `с ${ctx.session.startTime} до ${ctx.session.endTime}`;
+
+      const cabinetName =
+        ctx.session.cabinet === 'cabinet13' ? 'Кабинет 13м²🔴' : 'Зал 17м²🔵';
+
+      const preview = `
+Проверьте данные:
+
+👤 Имя: ${ctx.session.clientName}
+📞 Контакт: ${ctx.session.contactInfo}
+📝 Название: ${ctx.session.appointmentName}
+🏢 Помещение: ${cabinetName}
+📅 Дата: ${ctx.session.date}
+⏰ Время: ${timeInfo}
+📢 Афиша: ${ctx.session.needsAfisha === 'yes' ? 'Да' : 'Нет'}
+      `;
+
+      ctx.session.step = 'confirmBooking';
+
+      await ctx.answerCallbackQuery();
+      await ctx.reply(preview, {
+        reply_markup: new InlineKeyboard()
+          .text('✅ Подтвердить', 'confirm_yes')
+          .text('❕ Редактировать', 'confirm_edit')
+          .text('❌ Отменить', 'confirm_no'),
+      });
+      break;
+
+    case 'confirmBooking':
+      await ctx.answerCallbackQuery();
+
+      if (callbackData === 'confirm_yes') {
+        try {
+          await sendTelegramNotification(ctx.session);
+          await ctx.reply(
+            'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с правилами бронирования и использования помещения <a href="https://disk.yandex.ru/i/vYDfeS16TEy9aQ">бронирования</a>',
+            { parse_mode: 'HTML' }
           );
-          endTime = `${endDate.getHours().toString().padStart(2, '0')}:${endDate
-            .getMinutes()
-            .toString()
-            .padStart(2, '0')}`;
-
-          // Check availability
-          const isAvailable = await isTimeSlotAvailable(
-            ctx.session.date,
-            startTime,
-            endTime,
-            ctx.session.cabinet
+          ctx.session.step = 'idle';
+        } catch (error) {
+          console.error('Error processing booking:', error);
+          await ctx.reply(
+            'Произошла ошибка при бронировании. Пожалуйста, попробуйте еще раз или свяжитесь с менеджером @dushepolezno_work.'
           );
-
-          if (isAvailable) {
-            try {
-              await addEventToCalendar(ctx.session);
-              await sendTelegramNotification(ctx.session);
-              await ctx.reply(
-                'Спасибо, мы свяжемся с вами в течение суток. Если вы не получили от нас ответа, пишите на @dushepolezno_work. Пока ждёте от нас ответа, ознакомьтесь, пожалуйста, с условиями <a href="https://yadi.sk/i/vYDfeS16TEy9aQ">бронирования</a>', { parse_mode: 'HTML' }
-              );
-              ctx.session.step = 'idle'; // Reset the conversation
-            } catch (error) {
-              console.error('Error processing booking:', error);
-              await ctx.reply(
-                'Произошла ошибка при бронировании. Пожалуйста, попробуйте еще раз или свяжитесь с менеджером.'
-              );
-            }
-          } else {
-            await ctx.reply(
-              'Извините, это время уже забронировано. Пожалуйста, выберите другое время.'
-            );
-            ctx.session.step = 'chooseStartTime';
-            const timeKeyboard = generateTimeKeyboard();
-            await ctx.reply('Выберите время начала (с 9:00 до 22:00):', {
-              reply_markup: timeKeyboard,
-            });
-          }
         }
+      }
+      if (callbackData === 'confirm_edit') {
+    
+      if (callbackData === 'confirm_no') {
+        ctx.session.step = 'idle';
+        await ctx.reply('Бронирование отменено. Введите /start для начала.');
       }
       break;
   }
 });
-// Errorssssssssssssss
+
+// Error handling
 bot.catch(err => {
   const ctx = err.ctx;
   console.error(`Error while handling update ${ctx.update.update_id}:`);
@@ -577,6 +402,7 @@ bot.catch(err => {
     console.error('Unknown error', e);
   }
 });
+
 // Add a health check route for deployment platforms
 app.get('/', (req, res) => {
   res.send('Bot is running');
@@ -586,4 +412,5 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 bot.start();
